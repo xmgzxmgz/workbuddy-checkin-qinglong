@@ -1,0 +1,17 @@
+# Python 缓存
+__pycache__/
+*.py[cod]
+*.pyc
+
+# 虚拟环境
+.venv/
+venv/
+env/
+
+# 日志
+*.log
+
+# 不要提交任何本地凭证 / Token 文件
+.token
+.env
+*.secret

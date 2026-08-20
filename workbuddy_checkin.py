@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-WorkBuddy / CodeBuddy 每日自动签到（青龙面板版）
+WorkBuddy 每日自动签到（青龙面板版）
 
 功能：
   - 调用官方签到接口，幂等（今日已签则跳过）

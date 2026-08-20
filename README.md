@@ -1,6 +1,6 @@
 # WorkBuddy 自动化工具箱（青龙面板版）
 
-> 一套纯 Python 脚本，把 WorkBuddy / CodeBuddy 的「每日签到」和「宠物自动探险领积分」两个高频手动操作完全自动化，适合跑在 [青龙面板](https://github.com/whyour/qinglong) 上定时执行。
+> 一套纯 Python 脚本，把 WorkBuddy 的「每日签到」和「宠物自动探险领积分」两个高频手动操作完全自动化，适合跑在 [青龙面板](https://github.com/whyour/qinglong) 上定时执行。
 
 [![GitHub](https://img.shields.io/badge/GitHub-xmgzxmgz%2Fworkbuddy--checkin--qinglong-blue?logo=github)](https://github.com/xmgzxmgz/workbuddy-checkin-qinglong)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -38,7 +38,7 @@
 
 ## 📦 获取 Token
 
-1. 登录 WorkBuddy / CodeBuddy 桌面客户端。
+1. 登录 WorkBuddy 桌面客户端。
 2. 找到本机登录态文件：
    - macOS：`~/Library/Application Support/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info`
    - Windows：`%APPDATA%\CodeBuddyExtension\Data\Public\auth\workbuddy-desktop.info`

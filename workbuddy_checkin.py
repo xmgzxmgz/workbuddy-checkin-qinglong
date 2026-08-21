@@ -126,8 +126,8 @@ def http_get(url, token, uid):
 
 def checkin_one(uid, token):
     """对单个账号执行签到，返回 (成功: bool, 消息: str)。"""
-    # 1) 查状态
-    st_code, st_text = http_get(STATUS_EP, token, uid)
+    # 1) 查状态（注意：官方接口只接受 POST，GET 会返回 404 page not found）
+    st_code, st_text = http_post(STATUS_EP, token, uid)
     if st_code == 401:
         return False, "登录态失效(401)，请在 WorkBuddy 客户端重新登录后更新 Token"
     try:

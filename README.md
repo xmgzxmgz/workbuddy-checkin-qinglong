@@ -82,8 +82,8 @@ export WB_ACCESS_TOKENS="eyJ...a,10086:eyJ...b"
 
 青龙里给两个脚本分别建任务，命令如：
 ```bash
-task wb_checkin.py
-task wb_travel.py
+task workbuddy_checkin.py
+task workbuddy_buddy_travel.py
 ```
 
 本地调试（不依赖青龙）：
@@ -131,7 +131,7 @@ flowchart LR
 1. 登录 WorkBuddy 桌面客户端。
 2. 找到本机登录态文件：
    - macOS：`~/Library/Application Support/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info`
-   - Windows：`%APPDATA%\CodeBuddyExtension\Data\Public\auth/workbuddy-desktop.info`
+   - Windows：`%LOCALAPPDATA%\CodeBuddyExtension\Data\Public\auth\workbuddy-desktop.info`
    - Linux：`~/.config/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info`
 3. 用任意编辑器打开，取 `auth.accessToken` 字段的整串值（通常以 `eyJ` 开头）作为 Token。
 

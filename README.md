@@ -17,6 +17,7 @@
 - [💡 为什么用这个](#-为什么用这个)
 - [🔧 安装](#-安装)
 - [🚀 快速开始](#-快速开始)
+- [📊 状态面板](#-状态面板)
 - [🔀 工作流](#-工作流)
 - [🏗️ 架构](#-架构)
 - [🔐 获取 Token](#-获取-token)
@@ -29,17 +30,19 @@
 
 | 脚本 | 功能 | 状态 |
 | --- | --- | --- |
-| `workbuddy_checkin.py` | 每日自动签到，领取积分 | ✅ 稳定 |
+| `workbuddy_checkin.py` | 每日自动签到，领取积分，输出完整签到状态面板 | ✅ 稳定 |
 | `workbuddy_buddy_travel.py` | 宠物自动探险（派出）+ 归来自动领积分 | ✅ 稳定 |
+| `get_token.py` | 自动定位登录态文件、提取 Token、校验有效性 | 🆕 5.8.3+ 适配 |
 
-两个脚本共用同一套设计原则：
+三个脚本共用同一套设计原则：
 
 - **零重依赖**：仅需 `requests`（青龙一般已自带），缺失时自动回退标准库 `urllib`
 - **Token 不写死**：全部从环境变量读取，支持多账号一行配置
 - **幂等安全**：高频运行无副作用；已签到 / 宠物空闲时调用领取会被优雅跳过
+- **失败自愈**：网络抖动与 5xx 自动退避重试，4xx 直接报出原因不空转
 - **青龙友好**：输出直接被面板捕获并推送通知（Server 酱 / 钉钉 / 企业微信 / Telegram）
 
-> ⚠️ 本工具仅向官方接口 `copilot.tencent.com` 发送**你自己的** Bearer Token，不会上传到任何第三方。**Token 属于敏感凭证，请勿提交到公开仓库、也不要在公开场合泄露。** 登录态通常约 90 天有效，过期后需重新获取并更新环境变量。
+> ⚠️ 本工具仅向官方接口 `copilot.tencent.com` 发送**你自己的** Bearer Token，不会上传到任何第三方。**Token 属于敏感凭证，请勿提交到公开仓库、也不要在公开场合泄露。** 登录态通常约 90 天有效，且可能被服务端提前吊销，过期后需重新获取并更新环境变量。
 
 ## 💡 为什么用这个
 
@@ -47,6 +50,8 @@
 | --- | --- | --- | --- |
 | 每日签到 | ✅ 自动 | ❌ 易忘 | ✅ |
 | 宠物探险 + 领积分 | ✅ 全自动 | ❌ 需手动领 | ⚠️ 少见 |
+| 签到状态面板（连续天数 / 奖励进度 / 打卡日历） | ✅ | ⚠️ 要点开客户端看 | ❌ |
+| Token 提取助手（含新版加密格式诊断） | ✅ `get_token.py` | ❌ | ❌ |
 | 多账号一行配置 | ✅ | ❌ | ⚠️ 各异 |
 | 幂等可高频跑 | ✅ | — | ⚠️ |
 | 零重依赖 | ✅ requests/urllib | — | ❌ 常带重依赖 |
@@ -70,7 +75,13 @@ pip install -r requirements.txt   # 仅 requests
 
 ## 🚀 快速开始
 
-配置环境变量（青龙：配置文件 / 环境变量；本地：直接前缀）：
+第一步，拿到 Token（**新版客户端请先看[获取 Token](#-获取-token)**）：
+
+```bash
+python3 get_token.py          # 自动查找登录态文件并给出结果或抓取指引
+```
+
+第二步，配置环境变量（青龙：配置文件 / 环境变量；本地：直接前缀）：
 
 ```bash
 # 单账号
@@ -80,7 +91,15 @@ export WB_ACCESS_TOKEN="eyJxxxx.your.token"
 export WB_ACCESS_TOKENS="eyJ...a,10086:eyJ...b"
 ```
 
-青龙里给两个脚本分别建任务，命令如：
+第三步，先只读确认 Token 有效：
+
+```bash
+python3 get_token.py --check            # 校验 WB_ACCESS_TOKEN 是否可用
+python3 workbuddy_checkin.py --status   # 只看签到状态，不签到
+```
+
+确认无误后再建定时任务。青龙里给两个脚本分别建任务，命令如：
+
 ```bash
 task workbuddy_checkin.py
 task workbuddy_buddy_travel.py
@@ -92,16 +111,45 @@ WB_ACCESS_TOKEN=xxxx python3 workbuddy_checkin.py
 WB_ACCESS_TOKENS=xxxx python3 workbuddy_buddy_travel.py
 ```
 
+## 📊 状态面板
+
+`workbuddy_checkin.py` 每次运行都会输出完整的签到状态，不用再去客户端点开看：
+
+```
+🔰 WorkBuddy 自动签到开始，共 1 个账号
+
+✅ [5995e421…]
+   📅 活动：每日签到
+      周期：2026-11-01 ~ 2026-12-01
+   🔥 当前连续签到：2 天
+   🎯 奖励节点：7天 / 14天 / 28天　距 7 天还差 5 天
+   ⏳ 今日未打卡　每日基础 +10
+   🗓️ 本期已打卡 4 天
+      10-30 10-31 11-01 11-02
+   💰 累计积分：1280
+   ✅ 签到成功 +10 积分（连续 3 天）
+
+🏁 完成：成功 1 / 失败 0 / 共 1
+```
+
+字段全部取自官方接口 `checkin-activity-status`，包含 `streak_days`、`streak_bonus_days`、`checkin_dates`、`total_credits` 等，与客户端内展示一致。
+
+两处容易踩的坑已在脚本内处理：
+
+- `daily-checkin` 的 `credit` / `streak_days` 在响应**顶层**，早期版本从 `data` 里取，导致积分恒显示 0
+- `streak_bonus_days` 可能是数组也可能是单值，脚本做了归一化
+
 ## 🔀 工作流
 
 **每日签到**
 ```mermaid
 flowchart TD
-  A[定时触发] --> B{今日已签到?}
-  B -- 是 --> C[跳过 · 无副作用]
-  B -- 否 --> D[调用 daily-checkin]
-  D --> E[领取积分]
-  E --> F[打印结果 · 青龙推送通知]
+  A[定时触发] --> B[查询 checkin-activity-status]
+  B --> C{今日已签到?}
+  C -- 是 --> D[跳过 · 无副作用]
+  C -- 否 --> E[调用 daily-checkin]
+  E --> F[领取积分]
+  F --> G[打印状态面板 · 青龙推送通知]
 ```
 
 **宠物自动探险（状态机）**
@@ -121,19 +169,64 @@ stateDiagram-v2
 flowchart LR
   S1[workbuddy_checkin.py] --> API[copilot.tencent.com 官方接口]
   S2[workbuddy_buddy_travel.py] --> API
+  T[get_token.py] -.读取本地登录态/给出抓取指引.-> ENV[(环境变量 Token)]
   API --> Q[青龙面板 · 捕获 stdout 推送通知]
-  ENV[(环境变量 Token)] --> S1
+  ENV --> S1
   ENV --> S2
 ```
 
 ## 🔐 获取 Token
 
-1. 登录 WorkBuddy 桌面客户端。
-2. 找到本机登录态文件：
-   - macOS：`~/Library/Application Support/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info`
-   - Windows：`%LOCALAPPDATA%\CodeBuddyExtension\Data\Public\auth\workbuddy-desktop.info`
-   - Linux：`~/.config/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info`
-3. 用任意编辑器打开，取 `auth.accessToken` 字段的整串值（通常以 `eyJ` 开头）作为 Token。
+### 客户端 5.8.3 及更新版本（重要变更）
+
+登录态文件里的 `auth.accessToken` **不再是明文字符串**，而变成了加密对象：
+
+```json
+"accessToken": {
+  "$wbEncrypted": 1,
+  "envelope": "eyJzdWl0ZSI6MSwia2V5SWQiOiI..."
+}
+```
+
+也就是说，按老教程「打开文件搜索 `auth.accessToken` 并复制整串」已经**取不到** Token——你能搜到字段名，但值是一段加密数据。这是客户端侧的改动，不是本项目的 bug。
+
+`get_token.py` 会识别这个格式并直接告诉你该怎么做，不会让你在文件里反复找：
+
+```bash
+python3 get_token.py
+# ⚠️ 字段 auth.accessToken 是加密对象，不是字符串 ……
+#    ① 浏览器抓取（最稳，推荐）
+#    ② 客户端内置页面抓取
+#    ③ 尝试历史副本（成功率低，仅作兜底）
+```
+
+### 方式一：浏览器抓取（推荐，任何版本都适用）
+
+1. 浏览器打开 <https://www.workbuddy.cn> 并登录
+2. `F12` → **Network** → 过滤 `Fetch/XHR`
+3. 点任意一个请求，在 **Request Headers** 里找 `Authorization`
+4. 复制 `Bearer ` 后面那一整串（`eyJ` 开头的三段式），这就是 Token
+
+### 方式二：客户端内置页面抓取
+
+在 WorkBuddy 客户端里打开「成长空间 / 签到」页面，同样按 `F12` → Network 取 `Authorization`。
+
+### 方式三：旧版明文文件（≤ 5.8.2，或历史副本）
+
+| 平台 | 路径 |
+| --- | --- |
+| macOS | `~/Library/Application Support/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info` |
+| Windows | `%LOCALAPPDATA%\CodeBuddyExtension\Data\Public\auth\workbuddy-desktop.info` |
+| Linux | `~/.config/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info` |
+
+旧版文件中 `auth.accessToken` 是明文，直接复制即可。`get_token.py` 会自动扫描同目录下的历史 `.info` 副本，但要注意：**这些旧 Token 大多已被服务端吊销**（JWT 未过期也会返回 401），取到后务必用 `--check` 验证。
+
+### 取到之后
+
+```bash
+python3 get_token.py --check    # 先验证
+python3 workbuddy_checkin.py --status   # 再看状态
+```
 
 ## 🌿 环境变量
 
@@ -144,23 +237,55 @@ flowchart LR
 | `WB_USER_ID` | 否 | 手动指定 X-User-Id；不填时自动从 JWT 解析 `sub` |
 | `WB_TRAVEL_LOCATION` | 否 | 宠物探险地点（`workbuddy_buddy_travel.py`）：填数字 id 或 code，不填取配置第一个 |
 | `WB_TRAVEL_AUTO_DEPART` | 否 | 默认 `1`；设为 `0` 则【只领取、不自动派出】 |
+| `WB_RETRY` | 否 | 默认 `2`；网络异常 / 5xx 的重试次数（共最多 3 次尝试） |
 | `WB_PROXY` | 否 | 默认直连；如需代理填 `http://127.0.0.1:7897` 或 `socks5://127.0.0.1:7897` |
+| `WB_AUTH_DIR` | 否 | `get_token.py` 用：自定义登录态目录 |
 | `QINGLONG_NOTIFY` | 否 | 默认 `1`；设为 `0` 关闭青龙通知标记 |
 
 ## 🗺️ 路线图
 
 - [x] 每日自动签到（幂等）
 - [x] 宠物自动探险 + 自动领积分（@jinyehyy 提议）
-- [ ] 签到日历 / 连续天数统计
-- [ ] 失败自愈重试 + 企业微信单独告警
+- [x] 签到状态面板 / 连续天数 / 奖励节点进度 / 打卡日历
+- [x] 失败自愈重试
+- [x] Token 提取助手（适配 5.8.3+ 加密格式，含有效性校验）
+- [ ] 连续奖励节点命中时的单独告警
 - [ ] Web 配置面板（可视化填 Token）
 
 ## ❓ 常见问题
 
 <details>
-<summary><b>Q：Token 会过期吗？</b></summary>
+<summary><b>Q：文件里搜不到 <code>auth.accessToken</code>，是不是脚本坏了？</b></summary>
 
-会。登录态通常约 90 天有效，过期后脚本调用失败，需重新获取并更新环境变量。
+不是。客户端 5.8.3 起把 Token 改成加密写入（`{"$wbEncrypted": 1, "envelope": "..."}`），字段名还在，但值不再是明文。请按[获取 Token](#-获取-token)里的抓取方式取，或直接运行 `python3 get_token.py` 按提示操作。
+</details>
+
+<details>
+<summary><b>Q：能自动「补登」漏签的日期，或自动「兑换奖励」吗？</b></summary>
+
+不能，这两件事在桌面客户端侧没有对应接口。
+
+桌面客户端与签到相关的接口只有三个：`checkin-status`、`checkin-activity-status`（查状态）、`daily-checkin`（当日签到）。「补登卡」和「兑换奖励」是活动网页端的功能，客户端并不调用，因此也没有可复用的请求可供脚本化。如果后续官方开放对应接口，本项目会跟进。
+
+当前能做到的是：**保证当天不漏签**（定时任务每天跑），并在日志里直接显示距离下一个奖励节点还差几天，方便你判断是否要手动去网页端补登。
+</details>
+
+<details>
+<summary><b>Q：Token 会过期吗？为什么 JWT 显示没过期却返回 401？</b></summary>
+
+会过期，而且**JWT 里的 `exp` 不是唯一判据**。服务端会主动吊销旧的登录态快照，此时 JWT 看起来还有效，但请求会直接返回 401。所以判断 Token 是否可用只有一个可靠办法：
+
+```bash
+python3 get_token.py --check
+```
+
+看到 401 就重新获取 Token。
+</details>
+
+<details>
+<summary><b>Q：能自动续期 Token 吗？</b></summary>
+
+不能。续期需要 `refreshToken` 走官方刷新流程，而新版客户端的 `refreshToken` 同样在加密字段里，且刷新行为与服务端会话状态绑定。硬做容易触发风控甚至踢掉客户端登录，得不偿失。建议按 90 天节奏手动更新一次，或让 `--check` 在定时任务里提前发现失效。
 </details>
 
 <details>
@@ -183,7 +308,9 @@ flowchart LR
 
 ## 🙏 致谢
 
-本项目的「宠物自动探险并自动领取积分」能力，由社区用户 **[@jinyehyy](https://github.com/jinyehyy)（能猫期货哥）** 在 [Issue #1](https://github.com/xmgzxmgz/workbuddy-checkin-qinglong/issues/1) 中提出并实现跟进，已随 `workbuddy_buddy_travel.py` 一起发布。欢迎更多朋友提 Issue / PR。
+本项目的「宠物自动探险并自动领取积分」能力，由社区用户 **[@jinyehyy](https://github.com/jinyehyy)（能猫期货哥）** 在 [Issue #1](https://github.com/xmgzxmgz/workbuddy-checkin-qinglong/issues/1) 中提出并实现跟进，已随 `workbuddy_buddy_travel.py` 一起发布。
+
+状态面板与 Token 助手源自 [Issue #4](https://github.com/xmgzxmgz/workbuddy-checkin-qinglong/issues/4)（[@SynchPj](https://github.com/SynchPj)）与 [Issue #5](https://github.com/xmgzxmgz/workbuddy-checkin-qinglong/issues/5)（[@Zlion-Y](https://github.com/Zlion-Y)）的反馈，感谢两位把问题描述清楚。欢迎更多朋友提 Issue / PR。
 
 ## 📄 许可
 

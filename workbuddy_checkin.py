@@ -62,15 +62,79 @@ def log(msg=""):
         print(msg)
 
 
-def decode_jwt_sub(token):
-    """无需密钥，仅 base64url 解码 payload 取 sub（Uid）。失败返回空串。"""
+def jwt_payload(token):
+    """无需密钥，仅 base64url 解码 JWT payload。失败返回空 dict。"""
     try:
         part = token.split(".")[1]
         part += "=" * (-len(part) % 4)
-        payload = json.loads(base64.urlsafe_b64decode(part).decode("utf-8", "ignore"))
-        return payload.get("sub") or ""
+        return json.loads(base64.urlsafe_b64decode(part).decode("utf-8", "ignore"))
     except Exception:
-        return ""
+        return {}
+
+
+def decode_jwt_sub(token):
+    """从 payload 取 sub（Uid）。失败返回空串。"""
+    return jwt_payload(token).get("sub") or ""
+
+
+def jwt_exp(token):
+    """返回 (本地时间字符串, unix 秒)；解析失败返回 ("", None)。"""
+    exp = jwt_payload(token).get("exp")
+    if not exp:
+        return "", None
+    try:
+        exp = int(exp)
+    except Exception:
+        return "", None
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(exp)), exp
+
+
+def sanitize_token(raw):
+    """清洗粘贴污染（换行、空格、引号、Bearer 前缀）。返回 (token, 修正说明列表)。"""
+    t = (raw or "").strip()
+    notes = []
+    if not t:
+        return "", notes
+    cleaned = t.strip('"\'`').replace("\n", "").replace("\r", "").replace("\t", "")
+    if cleaned != t:
+        notes.append("已去掉换行/引号")
+    t = cleaned
+    if t.lower().startswith("bearer"):
+        t = t[6:].lstrip(":： ").strip()
+        notes.append("已去掉 `Bearer ` 前缀")
+    return t, notes
+
+
+def diagnose_token(t):
+    """发请求之前先看 Token 形态对不对，避免把「复制错了」误报成「登录态失效」。
+
+    返回 (是否可用, 诊断文字)。只做本地判断，不发请求。
+    """
+    if not t:
+        return False, "Token 为空"
+    if t.startswith("{") or "$wbEncrypted" in t or '"envelope"' in t:
+        return False, (
+            "你填的是**加密信封**（{\"$wbEncrypted\":1,\"envelope\":\"...\"}），不是 Token 本身。\n"
+            "   5.8.3+ 客户端把 Token 加密后落盘，文件里已经没有明文可复制，这是客户端改动不是脚本问题。\n"
+            "   请运行 python3 get_token.py，按它给出的抓取方式取一次。"
+        )
+    if "accessToken" in t or "refreshToken" in t:
+        return False, (
+            "你填的像是字段名/片段，不是 Token 值本身。\n"
+            "   Token 是一整串 eyJ 开头、用两个 . 分成三段的字符串。"
+        )
+    parts = t.split(".")
+    if not t.startswith("eyJ") or len(parts) != 3:
+        return False, (
+            "这不是标准 JWT（应为 eyJ 开头的三段式并用 . 分隔，当前 %d 段 / %d 字符）。\n"
+            "   常见原因：只复制了半截、复制成了 refreshToken、或把 Cookie 当成 Token。"
+            % (len(parts), len(t))
+        )
+    exp_str, exp_ts = jwt_exp(t)
+    if exp_ts and exp_ts <= time.time():
+        days = max(1, int((time.time() - exp_ts) // 86400))
+        return False, "这个 Token 自身已过期 %d 天（exp=%s），必须重新获取。" % (days, exp_str)
+    return True, ""
 
 
 def get_accounts():
@@ -96,6 +160,9 @@ def get_accounts():
         return []
     fixed = []
     for uid, tok in tokens:
+        tok, notes = sanitize_token(tok)
+        for n in notes:
+            log("ℹ️ 已自动修正 Token：%s" % n)
         if not uid:
             uid = decode_jwt_sub(tok)
         fixed.append((uid, tok))
@@ -142,6 +209,9 @@ def http_post(url, token, uid, body="{}"):
 
 
 def fmt_ts(ts):
+    """时间字段可能是秒/毫秒时间戳，也可能已经是 '2026-09-30 00:00:00' 字符串。"""
+    if isinstance(ts, str):
+        return ts.strip()[:19]
     try:
         ts = int(ts)
         if ts > 1e11:
@@ -149,6 +219,20 @@ def fmt_ts(ts):
         return time.strftime("%Y-%m-%d", time.localtime(ts))
     except Exception:
         return ""
+
+
+def norm_text(v):
+    """接口里同名按钮字段有时是字符串、有时是对象（如 action_button），统一取可读文本。"""
+    if isinstance(v, str):
+        return v.strip()
+    if isinstance(v, dict):
+        if v.get("show") is False:
+            return ""
+        for k in ("text", "label", "title", "name"):
+            t = v.get(k)
+            if isinstance(t, str) and t.strip():
+                return t.strip()
+    return ""
 
 
 def parse_status(data):
@@ -173,11 +257,12 @@ def parse_status(data):
                 norm.append(str(v))
     bonus = d.get("streak_bonus_days")
     if isinstance(bonus, list):
-        bonus_days = [int(b) for b in bonus if str(b).isdigit()]
-    elif isinstance(bonus, (int, float)):
+        bonus_days = [int(b) for b in bonus if str(b).isdigit() and int(b) > 0]
+    elif isinstance(bonus, (int, float)) and int(bonus) > 0:
         bonus_days = [int(bonus)]
     else:
         bonus_days = []
+    week = d.get("week_progress") if isinstance(d.get("week_progress"), list) else []
     return {
         "active": bool(d.get("active")),
         "today_checked_in": bool(d.get("today_checked_in")),
@@ -189,11 +274,13 @@ def parse_status(data):
         "today_credit": d.get("today_credit"),
         "total_credits": d.get("total_credits"),
         "checkin_dates": sorted(norm),
+        "week_progress": [bool(x) for x in week],
+        "week_checkin_days": int(d.get("week_checkin_days") or 0),
         "start_time": fmt_ts(d.get("start_time")),
         "end_time": fmt_ts(d.get("end_time")),
         "activity_name": d.get("activity_name") or "",
-        "claim_button_text": d.get("claim_button_text") or "",
-        "action_button": d.get("action_button") or "",
+        "claim_button_text": norm_text(d.get("claim_button_text")),
+        "action_button": norm_text(d.get("action_button")),
     }
 
 
@@ -243,6 +330,17 @@ def render_panel(st):
         today += "　每日基础 +%s" % daily
     lines.append(today)
 
+    # 本周打卡（接口按周一到周日给布尔数组）
+    wp = st.get("week_progress") or []
+    if wp:
+        today_idx = min(len(wp) - 1, time.localtime().tm_wday)
+        marks = []
+        for i, done in enumerate(wp[:7]):
+            mark = "●" if done else "○"
+            marks.append("[%s]" % mark if i == today_idx else mark)
+        done_n = sum(1 for x in wp[:7] if x)
+        lines.append("📆 本周打卡：%s（%d/%d）" % (" ".join(marks), done_n, len(wp[:7])))
+
     # 日历
     dates = st["checkin_dates"]
     if dates:
@@ -250,7 +348,7 @@ def render_panel(st):
         # 太长则只展示最后 14 条，避免刷屏
         show = dates[-14:]
         prefix = "… " if len(dates) > len(show) else ""
-        lines.append("   %s%s" % (prefix, " ".join(x[-5:] if len(x) > 5 else x for x in show)))
+        lines.append("   %s%s" % (prefix, " ".join(str(x)[-5:] if len(str(x)) > 5 else str(x) for x in show)))
 
     if st.get("total_credits") is not None:
         lines.append("💰 累计积分：%s" % st["total_credits"])
@@ -259,15 +357,30 @@ def render_panel(st):
     web_actions = [x for x in (st.get("action_button"), st.get("claim_button_text")) if x]
     if web_actions:
         lines.append("🔗 网页端还有入口：%s（这类操作需在网页端完成）"
-                     % "、".join(web_actions))
+                     % "、".join(str(x) for x in web_actions))
     return lines
+
+
+def msg_401(token):
+    """把 401 说清楚：是过期、还是被服务端吊销。"""
+    exp_str, exp_ts = jwt_exp(token)
+    parts = ["登录态失效（HTTP 401）：服务端拒绝了这枚 Token。"]
+    if exp_ts:
+        left = int((exp_ts - time.time()) / 86400)
+        if left >= 0:
+            parts.append("它在 JWT 里还剩 %d 天才过期 → 属于「服务端主动吊销旧登录态快照」：" % left)
+            parts.append("客户端每重新登录一次就会吊销上一个快照，旧 Token 立即作废。")
+        else:
+            parts.append("且 JWT 自身已过期（exp=%s）。" % exp_str)
+    parts.append("处理顺序：客户端保持登录 → python3 get_token.py 重新取 → 更新环境变量 → python3 get_token.py --check 复验。")
+    return "\n   ".join(parts)
 
 
 def fetch_status(uid, token):
     """查询状态，返回 (ok, status_dict, msg)。"""
     code, text = http_post(STATUS_EP, token, uid)
     if code == 401:
-        return False, None, "登录态失效(401)：请在 WorkBuddy 客户端重新登录后更新 Token（可用 get_token.py 辅助获取）"
+        return False, None, msg_401(token)
     try:
         payload = json.loads(text)
     except Exception:
@@ -281,7 +394,7 @@ def do_checkin(uid, token, st):
     """执行签到，返回 (成功, 消息)。"""
     ck_code, ck_text = http_post(CHECKIN_EP, token, uid)
     if ck_code == 401:
-        return False, "登录态失效(401)：请在 WorkBuddy 客户端重新登录后更新 Token"
+        return False, msg_401(token)
     try:
         ck = json.loads(ck_text)
     except Exception:
@@ -306,6 +419,13 @@ def do_checkin(uid, token, st):
 
 def handle_one(uid, token):
     """处理单个账号，返回 (成功, [输出行])。"""
+    usable, why = diagnose_token(token)
+    if not usable:
+        body = ["Token 无法使用（本地预检已拦下，未发起任何请求）："]
+        body += ["   " + ln for ln in why.split("\n")]
+        body += ["   取 Token：python3 get_token.py　｜　校验：python3 get_token.py --check"]
+        return False, body
+
     lines = []
     ok, st, msg = fetch_status(uid, token)
     if not ok:

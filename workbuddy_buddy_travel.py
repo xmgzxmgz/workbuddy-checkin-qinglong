@@ -75,6 +75,18 @@ def decode_jwt_sub(token):
         return ""
 
 
+def token_problem(t):
+    """轻量形态自检：粘贴错了要在本地说清楚，别让接口层的 401 背锅。"""
+    if not t:
+        return "Token 为空"
+    if t.startswith("{") or "$wbEncrypted" in t:
+        return "填的是加密信封（{\"$wbEncrypted\":1,\"envelope\":\"...\"}），不是 Token 本身"
+    seg = t.split(".")
+    if not t.startswith("eyJ") or len(seg) != 3:
+        return "不是标准 JWT（应为 eyJ 开头的三段式，当前 %d 段 / %d 字符），可能只复制了半截" % (len(seg), len(t))
+    return ""
+
+
 def get_accounts():
     tokens_raw = os.environ.get("WB_ACCESS_TOKENS", "").strip()
     single = os.environ.get("WB_ACCESS_TOKEN", "").strip()
@@ -96,6 +108,14 @@ def get_accounts():
         return []
     fixed = []
     for uid, tok in tokens:
+        tok = (tok or "").strip().strip('"\'`').replace("\n", "").replace("\r", "")
+        if tok.lower().startswith("bearer"):
+            tok = tok[6:].lstrip(":： ").strip()
+        bad = token_problem(tok)
+        if bad:
+            log("❌ 这个账号的 Token 无法使用：%s" % bad)
+            log("   取 Token / 校验：python3 get_token.py ｜ python3 get_token.py --check")
+            continue
         if not uid:
             uid = decode_jwt_sub(tok)
         fixed.append((uid, tok))

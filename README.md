@@ -124,6 +124,7 @@ WB_ACCESS_TOKENS=xxxx python3 workbuddy_buddy_travel.py
    🔥 当前连续签到：2 天
    🎯 奖励节点：7天 / 14天 / 28天　距 7 天还差 5 天
    ⏳ 今日未打卡　每日基础 +10
+   📆 本周打卡：● [●] ○ ○ ○ ○ ○（2/7）
    🗓️ 本期已打卡 4 天
       10-30 10-31 11-01 11-02
    💰 累计积分：1280
@@ -132,12 +133,14 @@ WB_ACCESS_TOKENS=xxxx python3 workbuddy_buddy_travel.py
 🏁 完成：成功 1 / 失败 0 / 共 1
 ```
 
-字段全部取自官方接口 `checkin-activity-status`，包含 `streak_days`、`streak_bonus_days`、`checkin_dates`、`total_credits` 等，与客户端内展示一致。
+字段全部取自官方接口 `checkin-activity-status`，包含 `streak_days`、`streak_bonus_days`、`checkin_dates`、`total_credits` 等，与客户端内展示一致。`📆 本周打卡` 里的 `[●]` 是今天。
 
-两处容易踩的坑已在脚本内处理：
+几处容易踩的坑已在脚本内处理：
 
 - `daily-checkin` 的 `credit` / `streak_days` 在响应**顶层**，早期版本从 `data` 里取，导致积分恒显示 0
-- `streak_bonus_days` 可能是数组也可能是单值，脚本做了归一化
+- `streak_bonus_days` 可能是数组也可能是单值，还可能给 `0` 表示"无奖励节点"，脚本做了归一化（`0` 不再被当成「0 天节点」显示）
+- `action_button` 是**对象**（`{show, text, action}`）而 `claim_button_text` 是字符串，字段类型不一致曾导致整个面板抛异常，现已统一取 `text`
+- `start_time` / `end_time` 可能是时间戳也可能是 `2026-09-30 00:00:00` 字符串，两种都兼容
 
 ## 🔀 工作流
 
@@ -249,6 +252,7 @@ python3 workbuddy_checkin.py --status   # 再看状态
 - [x] 签到状态面板 / 连续天数 / 奖励节点进度 / 打卡日历
 - [x] 失败自愈重试
 - [x] Token 提取助手（适配 5.8.3+ 加密格式，含有效性校验）
+- [x] Token 形态本地预检（区分「复制错了」与「服务端吊销」）
 - [ ] 连续奖励节点命中时的单独告警
 - [ ] Web 配置面板（可视化填 Token）
 
@@ -258,6 +262,28 @@ python3 workbuddy_checkin.py --status   # 再看状态
 <summary><b>Q：文件里搜不到 <code>auth.accessToken</code>，是不是脚本坏了？</b></summary>
 
 不是。客户端 5.8.3 起把 Token 改成加密写入（`{"$wbEncrypted": 1, "envelope": "..."}`），字段名还在，但值不再是明文。请按[获取 Token](#-获取-token)里的抓取方式取，或直接运行 `python3 get_token.py` 按提示操作。
+</details>
+
+<details>
+<summary><b>Q：日志报「token 错误 / 登录态失效(401)」，到底是哪一环错了？</b></summary>
+
+脚本现在会在**发请求之前**先做一次本地形态自检，把「复制错了」和「真失效」分开，不再一律报 401：
+
+| 日志里的提示 | 实际原因 | 怎么修 |
+| --- | --- | --- |
+| `填的是加密信封…` | 复制了 `{"$wbEncrypted":1,"envelope":"…"}` | 按[获取 Token](#-获取-token)重新取 |
+| `不是标准 JWT（当前 1 段 / 40 字符）` | 只复制了半截 / 复制成了 Cookie 或 refreshToken | 复制完整的三段式 `eyJ…` |
+| `Token 自身已过期 N 天` | JWT 的 `exp` 已过 | 重新登录后取新 Token |
+| `登录态失效（HTTP 401）` + `还剩 N 天` | 服务端吊销了旧快照（重新登录过就会发生） | 重新取一次 Token |
+| `已自动修正 Token：已去掉 Bearer 前缀` | 连 `Bearer ` 一起复制了 | 已自动修复，不用管 |
+| 面板正常但显示「今日已签到，跳过」 | 幂等跳过，不是失败 | 无需处理 |
+
+两条只读命令（不签到、无副作用）：
+
+```bash
+python3 get_token.py --check            # 判定 Token 是否仍有效
+python3 workbuddy_checkin.py --status   # 只看状态面板
+```
 </details>
 
 <details>

@@ -180,6 +180,18 @@ flowchart LR
 
 ## 🔐 获取 Token
 
+**先判断自己是哪一版**，两条路完全不同，别拿新版的方法套旧版：
+
+| 客户端版本 | 登录态文件里的 `accessToken` | 该用哪个方式 |
+| --- | --- | --- |
+| **≤ 5.8.2**（如 5.3.14、5.7.x） | 明文，`"accessToken": "eyJ..."` | 👉 [方式三：直接复制](#方式三旧版明文文件-582或历史副本)，**最简单，不用跑脚本** |
+| **≥ 5.8.3** | 加密对象 `{"$wbEncrypted": 1, "envelope": "..."}` | 👉 [方式一：浏览器抓取](#方式一浏览器抓取推荐任何版本都适用) |
+
+版本号在客户端「设置 → 关于」里看。不想查版本也可以直接去方式三的路径打开文件看一眼：
+
+- 值是 `eyJ` 开头的长字符串 → 明文，旧版，直接复制
+- 值是 `{` 开头的花括号对象 → 已加密，新版，改用浏览器抓
+
 ### 客户端 5.8.3 及更新版本（重要变更）
 
 登录态文件里的 `auth.accessToken` **不再是明文字符串**，而变成了加密对象：
@@ -222,7 +234,9 @@ python3 get_token.py
 | Windows | `%LOCALAPPDATA%\CodeBuddyExtension\Data\Public\auth\workbuddy-desktop.info` |
 | Linux | `~/.config/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info` |
 
-旧版文件中 `auth.accessToken` 是明文，直接复制即可。`get_token.py` 会自动扫描同目录下的历史 `.info` 副本，但要注意：**这些旧 Token 大多已被服务端吊销**（JWT 未过期也会返回 401），取到后务必用 `--check` 验证。
+旧版文件中 `auth.accessToken` 是明文，直接复制即可（**如果你的客户端 ≤ 5.8.2，到这里就结束了，不需要跑任何脚本**）。`get_token.py` 会自动扫描同目录下的历史 `.info` 副本，但要注意：**这些旧 Token 大多已被服务端吊销**（JWT 未过期也会返回 401），取到后务必用 `--check` 验证。
+
+Windows 上找这个目录：`Win + R` → 粘贴 `%LOCALAPPDATA%\CodeBuddyExtension\Data\Public\auth\` → 回车，用记事本打开 `workbuddy-desktop.info`，`Ctrl + F` 搜 `accessToken`。
 
 ### 取到之后
 
